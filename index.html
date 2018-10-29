@@ -1,0 +1,977 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+
+  <title>RestaurantFinder</title>
+
+  <script src="https://d3js.org/d3.v5.min.js"></script>
+
+  <style type="text/css">
+
+    body {
+      font-family: "Comic Sans MS", "Comic Sans", cursive;
+    }
+
+    div.tooltip { 
+      position: absolute;     
+      text-align: center;     
+      width: 250px;          
+      height: 60px;         
+      padding: 2px;       
+      font: 12px sans-serif;    
+      background: lightsteelblue; 
+      border: 0px;    
+      border-radius: 8px;     
+      pointer-events: none;     
+    }
+
+    .ticks {
+      font-size: 15px;
+    }
+
+    .track,
+    .track-inset,
+    .track-overlay {
+      stroke-linecap: round;
+    }
+
+    .track {
+      stroke: #000;
+      stroke-opacity: 0.3;
+      stroke-width: 10px;
+    }
+
+    .track-inset {
+      stroke: #ddd;
+      stroke-width: 8px;
+    }
+
+    .track-overlay {
+      pointer-events: stroke;
+      stroke-width: 50px;
+      stroke: transparent;
+      cursor: crosshair;
+    }
+
+    .handle {
+      fill: #fff;
+      stroke: #000;
+      stroke-opacity: 0.5;
+      stroke-width: 1.25px;
+    }
+
+  </style>>
+  
+</head>
+
+<body>
+
+    <fieldset>
+      <label style="color:blue;">Long1: <input type="text" id="x1"></label><span style="padding-left:12px">
+      <label style="color:blue;">Lat1: <input type="text" id="y1"></label><span style="padding-left:12px">
+      <label style="color:red;">Long2: <input type="text" id="x2"></label><span style="padding-left:12px">
+      <label style="color:red;">Lat2: <input type="text" id="y2"></label><span style="padding-left:12px">
+      <label style="color:blue;">Radius1: <input readonly type="text" id="r1"> miles</label><span style="padding-left:12px">
+      <label style="color:red;">Radius2: <input readonly type="text" id="r2"> miles</label><span style="padding-left:17px">
+      <button onclick="setValues()">GO!</button>
+    </fieldset> 
+
+  	<script src="https://d3js.org/d3-array.v1.min.js"></script>
+    <script src="https://d3js.org/d3-geo.v1.min.js"></script>
+    <script>
+
+    /////////////// map ///////////////
+
+    // Set up size
+    var mapWidth = 800;
+    var mapHeight = 800;
+
+    // Set up projection that the map is using
+    var projection = d3.geoMercator()
+      .center([-122.433701, 37.767683]) // San Francisco, roughly
+      .scale(225000)
+      .translate([mapWidth / 2, mapHeight / 2]);
+
+    // This is the mapping between <longitude, latitude> position to <x, y> pixel position on the map
+    // projection is a function and it has an inverse:
+    // projection([lon, lat]) returns [x, y]
+    // projection.invert([x, y]) returns [lon, lat]
+
+    // Add an SVG element to the DOM
+    var svg = d3.select('body').append('svg')
+      .attr('width', mapWidth * 1.8)
+      .attr('height', mapHeight);
+
+    // Add SVG map at correct size, assuming map is saved in a subdirectory called `data`
+    svg.append('image')
+      .attr('width', mapWidth)
+      .attr('height', mapHeight)
+      .attr('xlink:href', 'data/sf-map.svg');
+
+
+    // initialize layers
+    var bottomLayer = svg.append("g")
+    var topLayer = svg.append("g")
+
+
+    // boolean value indicating if user is dragging loc/bound
+    var onDrag = false
+
+    /////////////// location1 ///////////////
+
+    // default x1, y1, r1
+    var x1 = mapWidth/4;
+    var y1 = mapWidth/4;
+    var r1 = 100
+
+    var location1 = topLayer.append("circle")  
+      .style("fill", "blue")
+      .attr("id", "circle_loc1")
+      .attr("r", 7)            
+      .attr("cx", x1)               
+      .attr("cy", y1)
+      .call(d3.drag().on("drag", on_loc1_drag)
+                     .on("end", end_loc1_drag));
+
+    // pre-populate fieldset
+    var long1, long1; 
+    [long1, lat1] = projection.invert([x1, y1])
+    document.getElementById('x1').value = long1;
+    document.getElementById('y1').value = lat1;   
+
+    var bound1 = topLayer.append("circle")
+      .style("stroke", "blue")
+      .style("stroke-opacity", "0")
+      .style("fill", "none")
+      .attr("id", "circle_bound1")
+      .attr("r", r1)
+      .attr("cx", x1)
+      .attr("cy", y1)
+      .attr("stroke-width", 10)
+      .call(d3.drag().on("drag", on_bound1_drag)
+                     .on("end", end_bound1_drag));
+
+
+    var filled1 = bottomLayer.append("circle")
+      .style("fill", "blue")
+      .style("opacity", "0.35")
+      .attr("id", "circle_filled1")
+      .attr("r", r1)
+      .attr("cx", x1)
+      .attr("cy", y1)
+
+
+    var arcRadian = d3.geoDistance(projection.invert([x1, y1]), 
+                                   projection.invert([x1+r1, y1]))
+    document.getElementById('r1').value = arcRadian*3959;
+
+    function bound1_blink() {
+      d3.select("#circle_filled1").transition()
+        .duration(1000)
+        .style("fill", "rgb(255,255,255)")   // disappear
+        .transition()
+        .duration(1000)
+        .style("fill", "blue")
+        .on("end", bound1_blink)
+    //    ^------^---- calling bound1_blink again when the transition ends
+    }
+    bound1_blink();   
+
+
+    /////////////// location2 ///////////////
+
+    // default x2, y2, r2
+    var x2 = mapWidth*3/4;
+    var y2 = mapWidth*3/4;
+    var r2 = 100
+
+    var location2 = topLayer.append("circle")  
+      .style("fill",  "red")
+      .attr("id", "circle_loc2")
+      .attr("r",  7)           
+      .attr("cx", x2)               
+      .attr("cy", y2)
+      .call(d3.drag().on("drag",  on_loc2_drag)
+                     .on("end", end_loc2_drag));
+
+    // pre-populate fieldset
+    var long2, lat2;
+    [long2, lat2] = projection.invert([x2, y2])
+    document.getElementById('x2').value = long2;
+    document.getElementById('y2').value = lat2;    
+
+    var bound2 = topLayer.append("circle")
+      .style("stroke", "red")
+      .style("stroke-opacity", "0")
+      .style("fill", "none")
+      .attr("id", "circle_bound2")
+      .attr("r", r2)
+      .attr("cx", x2)
+      .attr("cy", y2)
+      .attr("stroke-width", 10)
+      .call(d3.drag().on("drag", on_bound2_drag)
+                     .on("end", end_bound2_drag));
+
+    var filled2 = bottomLayer.append("circle")
+      .style("fill", "red")
+      .style("opacity", "0.35")
+      .attr("id", "circle_filled2")
+      .attr("r", r2)
+      .attr("cx", x2)
+      .attr("cy", y2)
+
+    var arcRadian = d3.geoDistance(projection.invert([x2, y2]), 
+                                   projection.invert([x2+r2, y2]))
+    document.getElementById('r2').value = arcRadian*3959;
+
+    function bound2_blink() {
+      d3.select("#circle_filled2").transition()
+        .duration(1000)
+        .style("fill", "rgb(255,255,255)")   // disappear
+        .transition()
+        .duration(1000)
+        .style("fill", "red")
+        .on("end", bound2_blink)
+    //    ^------^---- calling bound2_blink again when the transition ends
+    }
+    bound2_blink();
+
+
+    /////////////// tooltip ///////////////
+
+    // Define the div for the tooltip
+    var div = d3.select("body").append("div") 
+      .attr("class", "tooltip")       
+      .style("opacity", 0);
+
+
+    /////////////// drag behavior ///////////////
+
+    function on_loc1_drag(d)  { 
+      d3.select(this) 
+        .style("fill", "#191970")  // BOLD: show darkblue when dragged
+        .attr("cx", d3.event.x)
+        .attr("cy", d3.event.y);  
+      d3.select("#circle_bound1")
+        .attr("cx", d3.event.x)
+        .attr("cy", d3.event.y);  
+      d3.select("#circle_filled1")
+        .attr("cx", d3.event.x)
+        .attr("cy", d3.event.y);  
+
+      onDrag = true;
+
+      // update x, y coordinates
+      x1 = d3.event.x;
+      y1 = d3.event.y;
+
+      // update longitude, latitude in fieldset
+      [long, lat] = projection.invert([x1, y1])
+      document.getElementById('x1').value = long;
+      document.getElementById('y1').value = lat;
+
+      update();
+    }
+
+    function on_loc2_drag(d)  { 
+      d3.select(this) 
+        .style("fill",  "8B0000")  // BOLD: show darkred when draggged
+        .attr("cx", d3.event.x)
+        .attr("cy", d3.event.y);  
+      d3.select("#circle_bound2")
+        .attr("cx", d3.event.x)
+        .attr("cy", d3.event.y); 
+      d3.select("#circle_filled2")
+        .attr("cx", d3.event.x)
+        .attr("cy", d3.event.y);  
+
+      onDrag = true;
+
+      // update x, y coordinates
+      x2 = d3.event.x;
+      y2 = d3.event.y;
+
+      // update longitude, latitude in fieldset
+      [long, lat] = projection.invert([x2, y2])
+      document.getElementById('x2').value = long;
+      document.getElementById('y2').value = lat;
+
+      update();
+    }
+
+    function on_bound1_drag(d)  { 
+      var x = d3.select("#circle_bound1")
+                .attr("cx")
+      var y = d3.select("#circle_bound1")
+                .attr("cy")
+      var cursor_x = d3.event.x
+      var cursor_y = d3.event.y
+      var r_new = Math.sqrt((cursor_x-x)*(cursor_x-x)+(cursor_y-y)*(cursor_y-y))        
+      var arcRadian = d3.geoDistance(projection.invert([x, y]), 
+                                     projection.invert([cursor_x, cursor_y]))
+
+      document.getElementById('r1').value = arcRadian*3959;
+
+      onDrag = true;  
+  
+      d3.select("#circle_bound1")
+        .attr("r", r_new);
+      d3.select("#circle_filled1")
+        .attr("r", r_new);
+    }
+
+    function on_bound2_drag(d)  { 
+      var x = d3.select("#circle_bound2")
+                .attr("cx")
+      var y = d3.select("#circle_bound2")
+                .attr("cy")
+      var cursor_x = d3.event.x
+      var cursor_y = d3.event.y
+      var r_new = Math.sqrt((cursor_x-x)*(cursor_x-x)+(cursor_y-y)*(cursor_y-y))
+
+      var arcRadian = d3.geoDistance(projection.invert([x, y]), 
+                                     projection.invert([cursor_x, cursor_y]))
+
+      document.getElementById('r2').value = arcRadian*3959;          
+
+  	  onDrag = true;
+
+      d3.select("#circle_bound2")
+        .attr("r", r_new);
+      d3.select("#circle_filled2")
+        .attr("r", r_new);
+    }
+
+    function end_loc1_drag(d) {
+      // change color back
+      d3.select(this)  
+        .style("fill",  "blue")
+
+      // update x, y coordinates
+      x1 = d3.event.x;
+      y1 = d3.event.y;
+
+      onDrag = false;
+
+      // update longitude, latitude in fieldset
+      [long, lat] = projection.invert([x1, y1])
+      document.getElementById('x1').value = long;
+      document.getElementById('y1').value = lat;
+
+      update();
+    }
+
+    function end_loc2_drag(d) {
+      // change color back
+      d3.select(this)  
+        .style("fill",  "red")
+
+      // update x, y coordinates
+      x2 = d3.event.x;
+      y2 = d3.event.y;
+
+      onDrag = false;
+
+      // update longitude, latitude in fieldset
+      [long, lat] = projection.invert([x2, y2])
+      document.getElementById('x2').value = long;
+      document.getElementById('y2').value = lat;
+
+      update();
+    }
+
+    function end_bound1_drag(d) {
+      // update r1
+      r1 = d3.select("#circle_bound1")
+             .attr("r")
+
+      onDrag = false;
+
+      var long, lat;
+      // update longitude, latitude in fieldset
+      [long, lat] = projection.invert([x1, y1])
+      document.getElementById('x1').value = long;
+      document.getElementById('y1').value = lat;
+
+      update();
+    }
+
+    function end_bound2_drag(d) {
+      // update r1
+      r2 = d3.select("#circle_bound2")
+             .attr("r")
+
+      onDrag = false;
+
+      var long, lat;
+      // update longitude, latitude in fieldset
+      [long, lat] = projection.invert([x1, y1])
+      document.getElementById('x1').value = long;
+      document.getElementById('y1').value = lat;
+
+      update();
+    }
+
+    /////////////// slider (date) //////////
+
+    var margin = {top:0, right:50, bottom:0, left:820},
+      width = 1400 -margin.left - margin.right,
+      height = 100 - margin.top - margin.bottom;
+
+    var formatDateIntoYear = d3.timeFormat("%Y");
+    var formatDate = d3.timeFormat("%b %Y");
+
+    var startDate = new Date("2015-10-02"),
+      endDate = new Date("2018-10-01");
+
+    var x_date = d3.scaleTime()
+      .domain([startDate, endDate])
+      .range([0, width])
+      .clamp(true);
+
+    var title_date = svg.append("text")  
+                        .attr("x", 930)
+                        .attr("y", 50)
+                        .text("Latest Inspection Date  >=  ")
+                        .style("font-family", "Comic Sans MS")
+                        .style("font-size", "20px")
+    svg.append('image')
+      .attr("x", 895)
+      .attr("y", 30)
+      .attr('width', 27)
+      .attr('height', 27)
+      .attr('xlink:href', 'data/date.png');
+
+    var slider_date = svg.append("g")
+      .attr("class", "slider")
+      .attr("transform", "translate(" + margin.left + "," + 80 + ")");
+
+    slider_date.append("line")
+      .attr("class", "track")
+      .attr("x1", x_date.range()[0])
+      .attr("x2", x_date.range()[1])
+      .select(function() { return this.parentNode.appendChild(this.cloneNode(true)); })
+      .attr("class", "track-inset")
+      .select(function() { return this.parentNode.appendChild(this.cloneNode(true)); })
+      .attr("class", "track-overlay")
+      .call(d3.drag()
+      .on("start.interrupt", function() { slider_date.interrupt(); })
+      .on("start drag", function() { date_drag(x_date.invert(d3.event.x)); }));
+
+    slider_date.insert("g", ".track-overlay")
+      .attr("class", "ticks")
+      .attr("transform", "translate(0," + 18 + ")")
+      .selectAll("text")
+      .data(x_date.ticks(3))
+      .enter()
+      .append("text")
+      .attr("x", x_date)
+      .attr("y", 10)
+      .attr("text-anchor", "middle")
+      .text(function(d) { return formatDateIntoYear(d); });
+
+    var handle_date = slider_date.insert("circle", ".track-overlay")
+      .attr("class", "handle")
+      .attr("r", 9);
+
+    function date_drag(date) {
+      handle_date.attr("cx", x_date(date));
+      title_date.text("Latest Inspection Date  >=  " + formatDate(date))
+      startDate = date;
+      update();
+    }  
+
+    /////////////// slider (score) //////////
+
+    var x_score = d3.scaleLinear()
+    .domain([50, 100])
+    .range([0, width])
+    .clamp(true);
+
+    var title_score = svg.append("text")  
+                        .attr("x", 930)
+                        .attr("y", 170)
+                        .text("Latest Inspection Score  >=  ")
+                        .style("font-size", "20px")
+
+    svg.append('image')
+      .attr("x", 898)
+      .attr("y", 150)
+      .attr('width', 27)
+      .attr('height', 27)
+      .attr('xlink:href', 'data/score.png');
+
+    var slider_score = svg.append("g")
+      .attr("class", "slider")
+      .attr("transform", "translate(" + margin.left + "," + 200 + ")");
+
+    slider_score.append("line")
+      .attr("class", "track")
+      .attr("x1", x_score.range()[0])
+      .attr("x2", x_score.range()[1])
+      .select(function() { return this.parentNode.appendChild(this.cloneNode(true)); })
+      .attr("class", "track-inset")
+      .select(function() { return this.parentNode.appendChild(this.cloneNode(true)); })
+      .attr("class", "track-overlay")
+      .call(d3.drag()
+      .on("start.interrupt", function() { slider_date.interrupt(); })
+      .on("start drag", function() { score_drag(x_score.invert(d3.event.x)); }));
+
+    slider_score.insert("g", ".track-overlay")
+      .attr("class", "ticks")
+      .attr("transform", "translate(0," + 18 + ")")
+      .selectAll("text")
+      .data(x_score.ticks(5))
+      .enter()
+      .append("text")
+      .attr("x", x_score)
+      .attr("y", 10)
+      .attr("text-anchor", "middle")
+      .text(function(d) { return d; });
+
+    var min_score = 50;  
+
+    var handle_score = slider_score.insert("circle", ".track-overlay")
+      .attr("class", "handle")
+      .attr("r", 9);
+
+    function score_drag(score) {
+      handle_score.attr("cx", x_score(score));
+      title_score.text("Latest Inspection Score  >=  " + Math.round(score))  
+      min_score = score;  
+      update();
+    }
+
+
+    /////////////// filters ///////////////
+    var approved_food_source = 0, 
+        fresh_food = 0,
+        clean_food = 0,
+        clean_employee = 0,
+        clean_facility = 0,
+        menu_match = 0,
+        proper_cooking = 0;
+
+    var title_filters = svg.append("text")  
+                        .attr("x", 1030)
+                        .attr("y", 300)
+                        .text("Filters")
+                        .style("font-size", "20px")   
+    svg.append('image')
+      .attr("x", 990)
+      .attr("y", 278)
+      .attr('width', 30)
+      .attr('height', 30)
+      .attr('xlink:href', 'data/filter.png');
+
+    svg.append('image')
+      .attr("x", 800)
+      .attr("y", 320)
+      .attr('width', 25)
+      .attr('height', 25)
+      .attr('xlink:href', 'data/food.png'); 
+
+    svg.append('image')
+      .attr("x", 800)
+      .attr("y", 345)
+      .attr('width', 25)
+      .attr('height', 25)
+      .attr('xlink:href', 'data/clean.png'); 
+
+    svg.append('image')
+      .attr("x", 800)
+      .attr("y", 370)
+      .attr('width', 25)
+      .attr('height', 25)
+      .attr('xlink:href', 'data/menu.png'); 
+
+    svg.append('image')
+      .attr("x", 800)
+      .attr("y", 395)
+      .attr('width', 25)
+      .attr('height', 25)
+      .attr('xlink:href', 'data/cooking.png');
+
+    svg.append('image')
+      .attr("x", 800)
+      .attr("y", 445)
+      .attr('width', 25)
+      .attr('height', 25)
+      .attr('xlink:href', 'data/all.png');
+
+    var checkboxes = svg.append("foreignObject")
+        .attr("width", 800)
+        .attr("height", 100)
+        .attr("x", 820)
+        .attr("y", 310)
+        .style("font-size", "18px")
+        .append("xhtml:body")
+        .html("<form><input type=checkbox id=cb11 />Approved food source<span style=padding-left:40px><input type=checkbox id=cb12 />Fresh food<span style=padding-left:75px><input type=checkbox id=cb13 />Clean food<br><input type=checkbox id=cb21 />Hygienic employees<span style=padding-left:62px><input type=checkbox id=cb22 />Hygienic facilities<br><input type=checkbox id=cb31 />Menus match actual food<br><input type=checkbox id=cb41 />Proper cooking<br><br><input type=checkbox id=cb_all onclick=toggle(this) />Check all</form>")
+        .on("click", function(){
+          updateCheckboxes();  
+    });
+
+    function updateCheckboxes() {
+      if (d3.select("#cb11").property("checked")) {
+        approved_food_source = 1;
+      } else {
+        approved_food_source = 0;
+        document.getElementById('cb_all').checked = false;
+      }
+
+      if (d3.select("#cb12").property("checked")) {
+        fresh_food = 1;
+      } else {
+        fresh_food = 0;
+        document.getElementById('cb_all').checked = false;
+      }
+
+      if (d3.select("#cb13").property("checked")) {
+        clean_food = 1;
+      } else {
+        clean_food = 0;
+        document.getElementById('cb_all').checked = false;
+      }
+
+      if (d3.select("#cb21").property("checked")) {
+        clean_employee = 1;
+      } else {
+        clean_employee = 0;
+        document.getElementById('cb_all').checked = false;
+      }
+
+      if (d3.select("#cb22").property("checked")) {
+        clean_facility = 1;
+      } else {
+        clean_facility = 0;
+        document.getElementById('cb_all').checked = false;
+      }
+
+      if (d3.select("#cb31").property("checked")) {
+        menu_match = 1;
+      } else {
+        menu_match = 0;
+        document.getElementById('cb_all').checked = false;
+      }
+
+      if (d3.select("#cb41").property("checked")) {
+        proper_cooking = 1;
+      } else {
+        proper_cooking = 0;
+        document.getElementById('cb_all').checked = false;
+      }
+
+      update();
+    }    
+
+    function toggle(source) {
+      var checkboxes = document.querySelectorAll('input[type="checkbox"]');
+      for (var i = 0; i < checkboxes.length; i++) {
+        if (checkboxes[i] != source)
+          checkboxes[i].checked = source.checked;
+      }
+      updateCheckboxes();
+    }    
+
+    /////////////// legends ///////////////
+
+    var legend_h_text = svg.append("text")  
+                        .attr("x", 30)
+                        .attr("y", 50)
+                        .text("Score: 90+")
+                        .style("font-size", "18px")
+
+    var legend_m_text = svg.append("text")  
+                        .attr("x", 30)
+                        .attr("y", 80)
+                        .text("Score: 75-90")
+                        .style("font-size", "18px")
+
+    var legend_l_text = svg.append("text")  
+                        .attr("x", 30)
+                        .attr("y", 110)
+                        .text("Score: 75-")
+                        .style("font-size", "18px")
+
+    var legend_h, legend_m, legend_l, legend_na;
+    function drawLegends() {
+      legend_h = svg.append("rect")  
+                        .attr("x", 15)
+                        .attr("y", 40)
+                        .attr("width", 9)
+                        .attr("height", 9)
+                        .style("fill", "green")
+
+      legend_m = svg.append("rect")  
+                        .attr("x", 15)
+                        .attr("y", 70)
+                        .attr("width", 9)
+                        .attr("height", 9)
+                        .style("fill", "yellow")
+
+      legend_l = svg.append("rect")  
+                        .attr("x", 15)
+                        .attr("y", 100)
+                        .attr("width", 9)
+                        .attr("height", 9)
+                        .style("fill", "red")
+    }
+    drawLegends();
+
+
+    /////////////// description ///////////////
+
+    svg.append("text")  
+       .attr("x", 810)
+       .attr("y", 520)
+       .text("Drag the blue and red radars to your points of interest. You will")
+       .style("font-size", "18px")
+                  
+    svg.append("text")  
+       .attr("x", 810)
+       .attr("y", 542)
+       .text("see restaurants that lie within the intersection of two searching")
+       .style("font-size", "18px")
+ 
+    svg.append("text")  
+       .attr("x", 810)
+       .attr("y", 564)
+       .text("areas. You can also change range by dragging radar's boundary.")
+       .style("font-size", "18px")
+
+    svg.append("text")  
+       .attr("x", 810)
+       .attr("y", 586)
+       .text("For more information, move the mouse over your interest to get")
+       .style("font-size", "18px")
+
+    svg.append("text")  
+       .attr("x", 810)
+       .attr("y", 608)
+       .text("business name, address, phone number and inspection score.")
+       .style("font-size", "18px")
+
+    /////////////// load data ///////////////
+
+    var dataset;
+    d3.csv("data/restaurant_scores_transformed.csv", parseInputRow).then(loadData)
+
+    function parseInputRow(d) {
+      return {
+        business_id: d.business_id,
+        business_name: d.business_name,
+        business_address: d.business_address,
+        business_postal_code: d.business_postal_code,
+        business_latitude: +d.business_latitude,
+        business_longitude: +d.business_longitude,
+        business_phone_number: d.business_phone_number,
+        inspection_date: d.inspection_date,
+        inspection_score: +d.inspection_score,
+        risks: d.risks
+      };
+    }
+
+    function loadData(data) {
+      dataset = data;
+    }
+
+
+    /////////////// plot ///////////////
+
+    function plotRestaurants(data) {
+
+      // remove rects last time
+      svg.selectAll("rect").remove()
+              
+      svg.selectAll("rect").data(data).enter()                
+        .append("rect")               
+        .style("fill", function(d) {
+          if (d.inspection_score > 90) {
+            return "green"
+          } else if (d.inspection_score >= 75) {
+            return "yellow"
+          } else  {
+            return "red"
+          } 
+        })                          
+        .attr("width",  5)
+        .attr("height", 5)               
+        .attr("x", function(d) {
+          return projection([d.business_longitude, d.business_latitude])[0];
+        })                        
+        .attr("y", function(d) {
+          return projection([d.business_longitude, d.business_latitude])[1];
+        })
+        // show restaurant details: name, address, phone number and score
+        .on("mouseover", function(d) {   
+        	if(!onDrag) { 
+	            div.transition()    
+	                .duration(200)    
+	                .style("opacity", .9);    
+	            div.html(d.business_name + "<br/>" 
+	              + "Address: " + d.business_address + "<br/>" 
+	              // format: XXX-XXX-XXXX
+	              + "Tel: " + d.business_phone_number.substring(1,4) + "-" 
+	                        + d.business_phone_number.substring(4,7) + "-" 
+	                        + d.business_phone_number.substring(7,11) + "<br/>" 
+	              + "Score: " + d.inspection_score)  
+	                .style("left", (d3.event.pageX) + "px")   
+	                .style("top", (d3.event.pageY - 28) + "px")
+	                // tooltip color changes dynamically based on inspection score
+	                // Green for 90+, Yellow for [75, 89), Red for 75-
+	                .style("background-color", function() {
+	                  if (d.inspection_score > 90) {
+	                    return "green"
+	                  } else if (d.inspection_score >= 75) {
+	                    return "yellow"
+	                  } else  {
+	                    return "red"
+	                  } 
+	                });  
+	            }
+            })          
+        .on("mouseout", function(d) {   
+            div.transition()    
+                .duration(500)    
+                .style("opacity", 0); 
+        });  
+
+        drawLegends();
+    }
+
+    function update() { 
+      var newData = dataset.filter(function(d) {
+        [curr_x, curr_y] = projection([d.business_longitude, d.business_latitude])
+        distance1 = Math.sqrt((curr_x-x1)*(curr_x-x1)+(curr_y-y1)*(curr_y-y1))
+        distance2 = Math.sqrt((curr_x-x2)*(curr_x-x2)+(curr_y-y2)*(curr_y-y2))
+        parser = d3.timeParse("%m/%d/%y")
+        inspection_date = parser(d.inspection_date)
+        score = parseInt(d.inspection_score)
+        return distance1 <= r1 && distance2 <= r2 
+          && inspection_date.getTime() >= startDate.getTime()
+          && score >= min_score;
+      })
+
+      if (approved_food_source == 1) {
+        newData = newData.filter(function(d) {
+          return !d.risks.includes("Unapproved food source");
+        })
+      }
+
+      if (fresh_food == 1) {
+        newData = newData.filter(function(d) {
+          return !d.risks.includes("Reservice of previously served foods");
+        })
+      }
+
+      if (clean_food == 1) {
+        newData = newData.filter(function(d) {
+          return !d.risks.includes("Foods not protected from contamination")
+            && !d.risks.includes("Contaminated or adulterated food")
+            && !d.risks.includes("Food in poor condition");
+        })
+      }
+
+      if (clean_facility == 1) {
+        newData = newData.filter(function(d) {
+          return !d.risks.includes("Unclean nonfood contact surfaces")
+            && !d.risks.includes("Unclean or degraded floors walls or ceilings")
+            && !d.risks.includes("Improper storage of equipment utensils or linens")
+            && !d.risks.includes("Inadequately cleaned or sanitized food contact surfaces")
+            && !d.risks.includes("Wiping cloths not clean or properly stored or inadequate sanitizer")
+            && !d.risks.includes("Unclean or unsanitary food contact surfaces")
+            && !d.risks.includes("Unclean unmaintained or improperly constructed toilet facilities")
+            && !d.risks.includes("Inadequate warewashing facilities or equipment")
+            && !d.risks.includes("Inadequate or unsanitary refuse containers or area or no garbage service")
+            && !d.risks.includes("Sewage or wastewater contamination");
+        })
+      }
+
+      if (clean_employee == 1) {
+        newData = newData.filter(function(d) {
+          return !d.risks.includes("Inadequate and inaccessible handwashing facilities")
+            && !d.risks.includes("Unclean hands or improper use of gloves")
+            && !d.risks.includes("Inadequate dressing rooms or improper storage of personal items")
+            && !d.risks.includes("Unsanitary employee garments hair or nails");
+        })
+      }
+
+      if (menu_match == 1) {
+        newData = newData.filter(function(d) {
+          return !d.risks.includes("Improper food labeling or menu misrepresentation");
+        })
+      }
+
+      if (proper_cooking == 1) {
+        newData = newData.filter(function(d) {
+          return !d.risks.includes("Improper cooling methods")
+            && !d.risks.includes("Improper reheating of food")
+            && !d.risks.includes("Improper thawing methods")
+            && !d.risks.includes("High risk food holding temperature")
+            && !d.risks.includes("Moderate risk food holding temperature");
+        })
+      }
+
+      plotRestaurants(newData);
+    }
+
+
+    function setValues() {
+      var leftBound = -122.5340
+      var rightBound = -122.3336
+      var upBound = 37.8464
+      var bottomBound = 37.6884
+      var radiusMin = 0.13
+      var radiusMax = 7.22
+
+      var newX1 = document.getElementById('x1').value
+      var newY1 = document.getElementById('y1').value
+      var newX2 = document.getElementById('x2').value
+      var newY2 = document.getElementById('y2').value
+      var newR1 = document.getElementById('r1').value
+      var newR2 = document.getElementById('r2').value
+
+      if(newX1 >= leftBound && newX1 <= rightBound &&
+         newY1 >= bottomBound && newY1 <= upBound && 
+         newX2 >= leftBound && newX2 <= rightBound &&
+         newY2 >= bottomBound && newY2 <= upBound && 
+         newR1 >= radiusMin && newR1 <= radiusMax &&
+         newR2 >= radiusMin && newR2 <= radiusMax) {
+
+        x1 = projection([newX1, newY1])[0]
+        y1 = projection([newX1, newY1])[1]
+        d3.select("#circle_loc1") 
+          .attr("cx", x1)
+          .attr("cy", y1);
+        d3.select("#circle_filled1")
+          .attr("cx", x1)
+          .attr("cy", y1)
+          .attr("r", r1);
+        d3.select("#circle_bound1")
+          .attr("cx", x1)
+          .attr("cy", y1)  
+          .attr("r", r1);
+
+        x2 = projection([newX2, newY2])[0]
+        y2 = projection([newX2, newY2])[1]
+        d3.select("#circle_loc2") 
+          .attr("cx", x2)
+          .attr("cy", y2);
+        d3.select("#circle_filled2")
+          .attr("cx", x2)
+          .attr("cy", y2)
+          .attr("r", r2);
+        d3.select("#circle_bound2")
+          .attr("cx", x2)
+          .attr("cy", y2)  
+          .attr("r", r2);
+
+        update()
+      }
+
+    }
+  	</script>
+</body>
+</html>
